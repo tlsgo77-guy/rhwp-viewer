@@ -125,7 +125,7 @@ pub(crate) fn tokenize_paragraph(
             let style_id = find_active_char_shape(char_shapes, utf16_pos);
             let ts = resolved_to_text_style(styles, style_id, current_lang);
             let font_size = if ts.font_size > 0.0 { ts.font_size } else { 12.0 };
-            let w = estimate_text_width(" ", &ts);
+            let w = estimate_text_width_unrounded(" ", &ts);
             tokens.push(BreakToken::Space { idx: i, width: w, max_font_size: font_size });
             i += 1;
             continue;
@@ -201,7 +201,7 @@ pub(crate) fn tokenize_paragraph(
                 current_lang = detect_lang_category(ch);
                 let ts = resolved_to_text_style(styles, style_id, current_lang);
                 let fs = if ts.font_size > 0.0 { ts.font_size } else { 12.0 };
-                let w = estimate_text_width(&ch.to_string(), &ts);
+                let w = estimate_text_width_unrounded(&ch.to_string(), &ts);
                 tokens.push(BreakToken::Text { start_idx: i, end_idx: i + 1, width: w, max_font_size: fs });
                 i += 1;
                 continue;
@@ -262,7 +262,7 @@ pub(crate) fn tokenize_paragraph(
                 current_lang = 1;
                 let ts = resolved_to_text_style(styles, style_id, current_lang);
                 let fs = if ts.font_size > 0.0 { ts.font_size } else { 12.0 };
-                let w = estimate_text_width(&ch.to_string(), &ts);
+                let w = estimate_text_width_unrounded(&ch.to_string(), &ts);
                 tokens.push(BreakToken::Text { start_idx: i, end_idx: i + 1, width: w, max_font_size: fs });
                 i += 1;
                 continue;
@@ -276,7 +276,7 @@ pub(crate) fn tokenize_paragraph(
             current_lang = detect_lang_category(ch);
             let ts = resolved_to_text_style(styles, style_id, current_lang);
             let fs = if ts.font_size > 0.0 { ts.font_size } else { 12.0 };
-            let w = estimate_text_width(&ch.to_string(), &ts);
+            let w = estimate_text_width_unrounded(&ch.to_string(), &ts);
             tokens.push(BreakToken::Text { start_idx: i, end_idx: i + 1, width: w, max_font_size: fs });
             i += 1;
             continue;
@@ -293,7 +293,7 @@ pub(crate) fn tokenize_paragraph(
             };
             let ts = resolved_to_text_style(styles, style_id, lang);
             let fs = if ts.font_size > 0.0 { ts.font_size } else { 12.0 };
-            let w = estimate_text_width(&ch.to_string(), &ts);
+            let w = estimate_text_width_unrounded(&ch.to_string(), &ts);
             tokens.push(BreakToken::Text { start_idx: i, end_idx: i + 1, width: w, max_font_size: fs });
             i += 1;
         }
@@ -323,7 +323,7 @@ fn measure_token_width(
             detected
         };
         let ts = resolved_to_text_style(styles, style_id, lang);
-        total += estimate_text_width(&ch.to_string(), &ts);
+        total += estimate_text_width_unrounded(&ch.to_string(), &ts);
     }
     total
 }
