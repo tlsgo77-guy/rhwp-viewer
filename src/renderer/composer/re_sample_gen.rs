@@ -108,8 +108,14 @@ mod tests {
                 ..Default::default()
             }];
 
-            // controls 초기화 (조판부호 제거)
-            para.controls.clear();
+            // 구역나누기/단정의 컨트롤은 유지, 나머지 제거
+            // (첫 문단의 SectionDef/ColumnDef가 없으면 페이지 크기 0으로 됨)
+            para.controls.retain(|c| {
+                matches!(c,
+                    crate::model::control::Control::SectionDef(_) |
+                    crate::model::control::Control::ColumnDef(_)
+                )
+            });
 
             // 정렬 변경
             if let Some(align) = alignment {
