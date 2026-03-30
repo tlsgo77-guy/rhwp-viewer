@@ -1209,9 +1209,10 @@ impl LayoutEngine {
         let mut prev_layout_para: Option<usize> = None;
         let mut prev_tac_seg_applied = false;
 
-        // 고정값 줄간격 TAC 표 병행: 표 영역 내 Fixed 문단을 표 위에 겹쳐 배치
-        let mut fixed_overlay_remaining: f64 = 0.0;
-        let mut fixed_overlay_y_restore: f64 = 0.0;  // 겹침 종료 후 복원할 y
+        // 고정값 줄간격 TAC 표 병행 (Task #9): 표 하단 비교용
+        let mut fix_table_start_y: f64 = 0.0;
+        let mut fix_table_visual_h: f64 = 0.0;
+        let mut fix_overlay_active = false;
 
         // vpos 보정을 위한 페이지 기준 vpos 계산
         // 페이지 첫 항목의 vpos를 기준점으로 삼아 모든 페이지에서 vpos 보정 적용
@@ -1304,6 +1305,21 @@ impl LayoutEngine {
             } // !shape_jumped
             prev_layout_para = Some(item_para);
 
+            // Percent 전환: 표 하단과 비교 (Task #9)
+            if fix_overlay_active {
+                let is_fixed = paragraphs.get(item_para)
+                    .and_then(|p| styles.para_styles.get(p.para_shape_id as usize))
+                    .map(|ps| ps.line_spacing_type == crate::model::style::LineSpacingType::Fixed)
+                    .unwrap_or(false);
+                if !is_fixed {
+                    let table_bottom = fix_table_start_y + fix_table_visual_h;
+                    if y_offset < table_bottom {
+                        y_offset = table_bottom;
+                    }
+                    fix_overlay_active = false;
+                }
+            }
+
             let (new_y, was_tac) = self.layout_column_item(
                 tree, &mut col_node, paper_images, &mut para_start_y,
                 item, page_content, paragraphs, composed, styles,
@@ -1315,36 +1331,20 @@ impl LayoutEngine {
             y_offset = new_y;
             prev_tac_seg_applied = was_tac;
 
-            // 고정값 줄간격 TAC 표 병행 배치
+            // 고정값 줄간격 TAC 표 병행 (Task #9)
             if was_tac {
-                // TAC 표 문단의 음수 line_spacing 감지
                 if let Some(para) = paragraphs.get(item_para) {
                     if let Some(seg) = para.line_segs.first() {
                         if seg.line_spacing < 0 {
-                            let table_visual_h = hwpunit_to_px(seg.line_height, self.dpi);
-                            let advance_h = hwpunit_to_px(seg.line_height + seg.line_spacing, self.dpi).max(0.0);
-                            fixed_overlay_remaining = (table_visual_h - advance_h).max(0.0);
-                            fixed_overlay_y_restore = y_offset;
-                            // y를 표 시작 근처로 되돌림 (표와 겹쳐서 배치)
-                            y_offset -= fixed_overlay_remaining;
+                            // 표 시작 y와 시각적 높이 저장 (Percent 전환 시 비교용)
+                            let ps = styles.para_styles.get(para.para_shape_id as usize);
+                            let sa = ps.map(|s| s.spacing_after).unwrap_or(0.0);
+                            fix_table_start_y = y_offset - hwpunit_to_px(
+                                seg.line_height + seg.line_spacing, self.dpi).max(0.0) - sa;
+                            fix_table_visual_h = hwpunit_to_px(seg.line_height, self.dpi);
+                            fix_overlay_active = true;
                         }
                     }
-                }
-            } else if fixed_overlay_remaining > 0.0 {
-                // Fixed 문단이면 겹침 영역 차감, 아니면 겹침 종료 후 y 복원
-                let is_fixed = paragraphs.get(item_para)
-                    .and_then(|p| styles.para_styles.get(p.para_shape_id as usize))
-                    .map(|ps| ps.line_spacing_type == crate::model::style::LineSpacingType::Fixed)
-                    .unwrap_or(false);
-                if is_fixed {
-                    let consumed = (new_y - (fixed_overlay_y_restore - fixed_overlay_remaining)).min(fixed_overlay_remaining);
-                    if consumed > 0.0 {
-                        fixed_overlay_remaining -= consumed;
-                    }
-                } else {
-                    // Percent 등 다른 줄간격: 겹침 종료, y를 표 아래로 복원
-                    y_offset = fixed_overlay_y_restore;
-                    fixed_overlay_remaining = 0.0;
                 }
             }
 
@@ -1812,6 +1812,7 @@ impl LayoutEngine {
             }
             // ── 표 레이아웃 ──
             let mut tac_seg_applied = false;
+            let tac_table_y_before = y_offset;  // Task #9: 표 렌더 전 y 보존
             if let Some(Control::Table(t)) = para.controls.get(control_index) {
                 let mt = measured_tables.iter().find(|mt|
                     mt.para_index == para_index && mt.control_index == control_index
@@ -1965,6 +1966,11 @@ impl LayoutEngine {
                 if let Some(seg) = para.line_segs.get(control_index) {
                     if seg.line_spacing > 0 {
                         y_offset += hwpunit_to_px(seg.line_spacing, self.dpi);
+                    } else if seg.line_spacing < 0 {
+                        // 음수 ls (Fixed 줄간격 TAC 표): y를 문단 advance로 리셋 (Task #9)
+                        // 표 렌더 높이가 아닌, 일반 문단과 동일한 lh+ls advance 사용
+                        let advance = hwpunit_to_px(seg.line_height + seg.line_spacing, self.dpi).max(0.0);
+                        y_offset = tac_table_y_before + advance;
                     }
                 }
                 let comp = composed.get(para_index);
