@@ -514,7 +514,11 @@ impl DocumentCore {
                     align_str,
                     ps.line_spacing, ps.line_spacing_type,
                     ps.margin_left, ps.margin_right, ps.indent,
-                    ps.spacing_before, ps.spacing_after, para_shape_id,
+                    // spacing_before/after는 원본 HWPUNIT → px (1x) 변환 (Task #9)
+                    // ResolvedParaStyle은 /2.0이 적용되어 UI 표시에 부적합
+                    raw_ps.map(|r| crate::renderer::hwpunit_to_px(r.spacing_before, self.dpi)).unwrap_or(ps.spacing_before),
+                    raw_ps.map(|r| crate::renderer::hwpunit_to_px(r.spacing_after, self.dpi)).unwrap_or(ps.spacing_after),
+                    para_shape_id,
                     head_str, ps.para_level, ps.numbering_id,
                     widow_orphan, keep_with_next, keep_lines, page_break_before,
                     font_line_height, single_line,

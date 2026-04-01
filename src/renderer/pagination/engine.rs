@@ -62,10 +62,11 @@ impl Paginator {
         let mut wrap_around_table_para: usize = 0;  // 어울림 표의 문단 인덱스
         let mut prev_pagination_para: Option<usize> = None;  // vpos 보정용 이전 문단
 
-        // 고정값 줄간격 TAC 표 병행 배치:
-        // 음수 line_spacing을 가진 TAC 표 이후, 같은 Fixed 줄간격의 빈 문단은
-        // 표 영역 안에 겹쳐 배치되므로 높이를 소비하지 않음.
-        let mut fixed_overlay_remaining: f64 = 0.0;  // 표 영역 내 남은 겹침 높이
+        // 고정값 줄간격 TAC 표 병행 (Task #9):
+        // Percent 전환 시 표 높이 - Fixed 누적 차이분을 current_height에 추가
+        let mut fix_table_visual_h: f64 = 0.0;
+        let mut fix_vpos_tmp: f64 = 0.0;
+        let mut fix_overlay_active = false;
 
         // 빈 줄 감추기: 페이지 시작 부분에서 감춘 빈 줄 수 (최대 2개)
         let mut hidden_empty_lines: u8 = 0;
@@ -102,6 +103,20 @@ impl Paginator {
                 }
             }
 
+            // 고정값→글자에따라 전환: 표 높이와 Fixed 누적의 차이분 추가 (Task #9)
+            if fix_overlay_active && !has_table {
+                let is_fixed = para_styles.get(para.para_shape_id as usize)
+                    .map(|ps| ps.line_spacing_type == crate::model::style::LineSpacingType::Fixed)
+                    .unwrap_or(false);
+                if !is_fixed {
+                    // 표 높이가 Fixed 누적보다 크면 차이분을 current_height에 추가
+                    if fix_table_visual_h > fix_vpos_tmp {
+                        st.current_height += fix_table_visual_h - fix_vpos_tmp;
+                    }
+                    fix_overlay_active = false;
+                }
+            }
+
             // 다단 나누기(MultiColumn)
             if para.column_type == ColumnBreakType::MultiColumn {
                 self.process_multicolumn_break(&mut st, para_idx, paragraphs, page_def);
@@ -130,15 +145,36 @@ impl Paginator {
                 self.process_page_break(&mut st);
             }
 
-            // tac 표: trailing line_spacing 제외한 콘텐츠 높이로 판단
+            // tac 표: 표 실측 높이 + 텍스트 줄 높이(th)로 판단 (Task #19)
             let para_height_for_fit = if has_table {
                 let has_tac = para.controls.iter().any(|c|
                     matches!(c, Control::Table(t) if t.common.treat_as_char));
                 if has_tac {
-                    let trailing_ls = para.line_segs.last()
-                        .map(|seg| crate::renderer::hwpunit_to_px(seg.line_spacing, self.dpi))
-                        .unwrap_or(0.0);
-                    (para_height - trailing_ls).max(0.0)
+                    // 표 실측 높이 합산
+                    let tac_h: f64 = para.controls.iter().enumerate()
+                        .filter_map(|(ci, c)| {
+                            if let Control::Table(t) = c {
+                                if t.common.treat_as_char {
+                                    let mt_h = measured.get_table_height(para_idx, ci).unwrap_or(0.0);
+                                    let outer = crate::renderer::hwpunit_to_px(
+                                        (t.outer_margin_top + t.outer_margin_bottom) as i32, self.dpi);
+                                    Some(mt_h + outer)
+                                } else { None }
+                            } else { None }
+                        })
+                        .sum();
+                    // 텍스트 줄 높이: th 기반 (lh에 표 높이가 포함되므로 th 사용)
+                    let text_h: f64 = para.line_segs.iter()
+                        .filter(|seg| seg.text_height > 0 && seg.text_height < seg.line_height / 3)
+                        .map(|seg| {
+                            crate::renderer::hwpunit_to_px(seg.text_height + seg.line_spacing, self.dpi)
+                        })
+                        .sum();
+                    // host spacing (sb + sa)
+                    let mp = measured.get_measured_paragraph(para_idx);
+                    let sb = mp.map(|m| m.spacing_before).unwrap_or(0.0);
+                    let sa = mp.map(|m| m.spacing_after).unwrap_or(0.0);
+                    tac_h + text_h + sb + sa
                 } else {
                     para_height
                 }
@@ -361,29 +397,19 @@ impl Paginator {
                     st.current_height = height_before_controls + cap;
                 }
 
-                // 고정값 줄간격 + 음수 ls: 후속 Fixed 문단이 표와 겹치는 높이 계산
+                // 표 감지: 시각적 높이 저장 + Fixed 누적 시작 (Task #9)
                 if let Some(seg) = para.line_segs.first() {
                     if seg.line_spacing < 0 {
-                        let table_visual_h = crate::renderer::hwpunit_to_px(seg.line_height, self.dpi);
-                        let advance_h = crate::renderer::hwpunit_to_px(seg.line_height + seg.line_spacing, self.dpi).max(0.0);
-                        fixed_overlay_remaining = (table_visual_h - advance_h).max(0.0);
+                        fix_table_visual_h = crate::renderer::hwpunit_to_px(seg.line_height, self.dpi);
+                        fix_vpos_tmp = 0.0;
+                        fix_overlay_active = true;
                     }
                 }
             }
 
-            // 고정값 줄간격 병행: Fixed 빈 문단이 표 영역 내에 있으면 높이 미소비
-            if fixed_overlay_remaining > 0.0 && !has_table {
-                let is_fixed = para_styles.get(para.para_shape_id as usize)
-                    .map(|ps| ps.line_spacing_type == crate::model::style::LineSpacingType::Fixed)
-                    .unwrap_or(false);
-                if is_fixed {
-                    let consumed = para_height.min(fixed_overlay_remaining);
-                    fixed_overlay_remaining -= consumed;
-                    st.current_height -= consumed;
-                } else {
-                    // Percent 등 다른 줄간격을 만나면 겹침 종료
-                    fixed_overlay_remaining = 0.0;
-                }
+            // Fixed 문단: 높이를 fix_vpos_tmp에 누적 (current_height는 건드리지 않음)
+            if fix_overlay_active && !has_table {
+                fix_vpos_tmp += para_height;
             }
 
         }
@@ -551,7 +577,8 @@ impl Paginator {
             } else {
                 trailing_ls
             };
-            st.current_height + (para_height - effective_trailing) <= available_now
+            // 부동소수점 누적 오차 허용 (0.5px ≈ 0.13mm)
+            st.current_height + (para_height - effective_trailing) <= available_now + 0.5
         } {
             // 문단 전체가 현재 페이지에 들어감
             st.current_items.push(PageItem::FullParagraph {
@@ -809,7 +836,24 @@ impl Paginator {
                         }
                     }
                 }
-                Control::Picture(_) | Control::Equation(_) => {
+                Control::Picture(pic) => {
+                    st.current_items.push(PageItem::Shape {
+                        para_index: para_idx,
+                        control_index: ctrl_idx,
+                    });
+                    // 비-TAC 그림: 본문 공간을 차지하는 배치이면 높이 추가 (Task #10)
+                    if !pic.common.treat_as_char
+                        && matches!(pic.common.text_wrap,
+                            crate::model::shape::TextWrap::Square
+                            | crate::model::shape::TextWrap::TopAndBottom)
+                    {
+                        let pic_h = crate::renderer::hwpunit_to_px(pic.common.height as i32, self.dpi);
+                        let margin_top = crate::renderer::hwpunit_to_px(pic.common.margin.top as i32, self.dpi);
+                        let margin_bottom = crate::renderer::hwpunit_to_px(pic.common.margin.bottom as i32, self.dpi);
+                        st.current_height += pic_h + margin_top + margin_bottom;
+                    }
+                }
+                Control::Equation(_) => {
                     st.current_items.push(PageItem::Shape {
                         para_index: para_idx,
                         control_index: ctrl_idx,
@@ -1032,8 +1076,14 @@ impl Paginator {
         if let Some(mp) = measured.get_measured_paragraph(para_idx) {
             let total_lines = mp.line_heights.len();
 
+            // 강제 줄넘김 후 TAC 표: 텍스트가 표 앞에 있음 (Task #19)
+            let has_forced_linebreak = is_tac_table && para.text.contains('\n');
             let pre_table_end_line = if vertical_offset > 0 && !para.text.is_empty() {
                 total_lines
+            } else if has_forced_linebreak && total_lines > 1 {
+                // 강제 줄넘김 전 텍스트 줄 수 = \n 개수
+                let newline_count = para.text.chars().filter(|&c| c == '\n').count();
+                newline_count.min(total_lines - 1)
             } else {
                 0
             };
@@ -1043,7 +1093,18 @@ impl Paginator {
             let is_first_table = !para.controls.iter().take(ctrl_idx)
                 .any(|c| matches!(c, Control::Table(_)));
             if pre_table_end_line > 0 && is_first_table && !is_wrap_around_table {
-                let pre_height: f64 = mp.line_advances_sum(0..pre_table_end_line);
+                // 강제 줄넘김+TAC 표: th 기반으로 텍스트 줄 높이 계산 (Task #19)
+                let pre_height: f64 = if has_forced_linebreak {
+                    para.line_segs.iter().take(pre_table_end_line)
+                        .map(|seg| {
+                            let th = crate::renderer::hwpunit_to_px(seg.text_height, self.dpi);
+                            let ls = crate::renderer::hwpunit_to_px(seg.line_spacing, self.dpi);
+                            th + ls
+                        })
+                        .sum()
+                } else {
+                    mp.line_advances_sum(0..pre_table_end_line)
+                };
                 st.current_items.push(PageItem::PartialParagraph {
                     para_index: para_idx,
                     start_line: 0,
@@ -1068,7 +1129,10 @@ impl Paginator {
             // 현재 표가 문단 내 마지막 표인지 확인 (중복 텍스트 방지)
             let is_last_table = !para.controls.iter().skip(ctrl_idx + 1)
                 .any(|c| matches!(c, Control::Table(_)));
-            let post_table_start = if table.common.treat_as_char {
+            let post_table_start = if has_forced_linebreak && pre_table_end_line > 0 {
+                // 강제 줄넘김 후 TAC 표: 표 이후 post-text 없음 (Task #19)
+                total_lines
+            } else if table.common.treat_as_char {
                 pre_table_end_line.max(1)
             } else if is_last_table && !is_first_table {
                 // 다중 표 문단의 마지막 표: pre-table 텍스트는 첫 표에서 처리했으므로

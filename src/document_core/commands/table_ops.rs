@@ -815,21 +815,40 @@ impl DocumentCore {
             ",\"hasCaption\":false".to_string()
         };
 
-        let treat_as_char = (table.attr & 0x01) != 0;
-        let text_wrap = match (table.attr >> 21) & 0x07 {
-            0 => "Square", 1 => "TopAndBottom", 2 => "BehindText", 3 => "InFrontOfText", _ => "Square"
+        // HWPX: common 필드에서 직접 읽기. HWP: attr 비트 연산 (common에도 동일하게 파싱됨)
+        let treat_as_char = table.common.treat_as_char;
+        let text_wrap = match table.common.text_wrap {
+            crate::model::shape::TextWrap::Square => "Square",
+            crate::model::shape::TextWrap::Tight => "Square",
+            crate::model::shape::TextWrap::Through => "Square",
+            crate::model::shape::TextWrap::TopAndBottom => "TopAndBottom",
+            crate::model::shape::TextWrap::BehindText => "BehindText",
+            crate::model::shape::TextWrap::InFrontOfText => "InFrontOfText",
         };
-        let vert_rel_to = match (table.attr >> 3) & 0x03 {
-            0 => "Paper", 1 => "Page", 2 => "Para", _ => "Paper"
+        let vert_rel_to = match table.common.vert_rel_to {
+            crate::model::shape::VertRelTo::Paper => "Paper",
+            crate::model::shape::VertRelTo::Page => "Page",
+            crate::model::shape::VertRelTo::Para => "Para",
         };
-        let vert_align = match (table.attr >> 5) & 0x07 {
-            0 => "Top", 1 => "Center", 2 => "Bottom", 3 => "Inside", 4 => "Outside", _ => "Top"
+        let vert_align = match table.common.vert_align {
+            crate::model::shape::VertAlign::Top => "Top",
+            crate::model::shape::VertAlign::Center => "Center",
+            crate::model::shape::VertAlign::Bottom => "Bottom",
+            crate::model::shape::VertAlign::Inside => "Inside",
+            crate::model::shape::VertAlign::Outside => "Outside",
         };
-        let horz_rel_to = match (table.attr >> 8) & 0x03 {
-            0 => "Paper", 1 => "Page", 2 => "Column", 3 => "Para", _ => "Paper"
+        let horz_rel_to = match table.common.horz_rel_to {
+            crate::model::shape::HorzRelTo::Paper => "Paper",
+            crate::model::shape::HorzRelTo::Page => "Page",
+            crate::model::shape::HorzRelTo::Column => "Column",
+            crate::model::shape::HorzRelTo::Para => "Para",
         };
-        let horz_align = match (table.attr >> 10) & 0x07 {
-            0 => "Left", 1 => "Center", 2 => "Right", 3 => "Inside", 4 => "Outside", _ => "Left"
+        let horz_align = match table.common.horz_align {
+            crate::model::shape::HorzAlign::Left => "Left",
+            crate::model::shape::HorzAlign::Center => "Center",
+            crate::model::shape::HorzAlign::Right => "Right",
+            crate::model::shape::HorzAlign::Inside => "Inside",
+            crate::model::shape::HorzAlign::Outside => "Outside",
         };
         let vert_offset = if rd.len() >= 4 { i32::from_le_bytes([rd[0], rd[1], rd[2], rd[3]]) } else { 0 };
         let horz_offset = if rd.len() >= 8 { i32::from_le_bytes([rd[4], rd[5], rd[6], rd[7]]) } else { 0 };

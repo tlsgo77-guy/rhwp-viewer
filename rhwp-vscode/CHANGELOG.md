@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.0] - 2026-03-31
+
+### 수정
+
+- Fixed 줄간격 TAC 표의 pagination overflow 수정 (#9)
+- 비-TAC 어울림 그림의 pagination 높이 반영 (#10)
+- TAC 표 line_end 보정에서 ls 이중 추가 제거 (#10)
+- HWPX 하이퍼링크 필드의 char_shape 매핑 수정 (#11)
+- HWPX 표 속성 UI 바인딩: table.common 필드 직접 사용
+- 문단 간격 UI 바인딩: 원본 HWPUNIT 값 사용 (/2.0 제거)
+- TAC 표 혼합 문단의 pagination 높이 이중 계산 수정 (#19)
+- 강제 줄넘김(Shift+Enter) 후 TAC 표의 ComposedLine 분리 (#20)
+- composer: LINE_SEG lh에 표 높이가 포함된 텍스트 줄을 th로 보정
+
 ## [0.3.0] - 2026-03-30
 
 ### 수정
