@@ -135,6 +135,19 @@
   }
   .stb-divider { display: none; }
   .stb-message { display: none; }
+  /* 모바일 줌: 쪽맞춤 + 100% 토글만 표시 */
+  #sb-zoom-fit-width { display: none; }
+  #sb-zoom-out { display: none; }
+  #sb-zoom-in { display: none; }
+  /* 줌 값 표시를 100% 토글 버튼으로 활용 */
+  .stb-zoom-val {
+    min-width: 44px;
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+  }
+  .stb-zoom-val:active {
+    background: var(--color-hover-bg);
+  }
   /* 줌 버튼 터치 타겟 확대 */
   .stb-icon-btn {
     width: var(--touch-target-min);

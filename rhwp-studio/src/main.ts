@@ -241,6 +241,7 @@ function setupZoomControls(): void {
     const pageInfo = wasm.getPageInfo(0);
     // pageInfo.width는 이미 px 단위 (96dpi 기준)
     const zoom = containerWidth / pageInfo.width;
+    console.log(`[zoom-fit-width] container=${containerWidth} page=${pageInfo.width} zoom=${zoom.toFixed(3)}`);
     vm.setZoom(Math.max(0.1, Math.min(zoom, 4.0)));
   });
 
@@ -254,7 +255,20 @@ function setupZoomControls(): void {
     // pageInfo.width/height는 이미 px 단위 (96dpi 기준)
     const zoomW = containerWidth / pageInfo.width;
     const zoomH = containerHeight / pageInfo.height;
+    console.log(`[zoom-fit-page] containerW=${containerWidth} containerH=${containerHeight} pageW=${pageInfo.width} pageH=${pageInfo.height} zoomW=${zoomW.toFixed(3)} zoomH=${zoomH.toFixed(3)}`);
     vm.setZoom(Math.max(0.1, Math.min(zoomW, zoomH, 4.0)));
+  });
+
+  // 모바일: 줌 값 클릭 → 100% 토글
+  document.getElementById('sb-zoom-val')!.addEventListener('click', () => {
+    const currentZoom = vm.getZoom();
+    if (Math.abs(currentZoom - 1.0) < 0.05) {
+      // 현재 100% → 쪽 맞춤으로 전환
+      document.getElementById('sb-zoom-fit')!.click();
+    } else {
+      // 현재 쪽 맞춤/기타 → 100%로 전환
+      vm.setZoom(1.0);
+    }
   });
 
   document.addEventListener('keydown', (e) => {

@@ -60,6 +60,16 @@ export class CanvasView {
       return;
     }
 
+    // 모바일: 문서 로드 시 폭 맞춤 줌 자동 적용
+    if (window.innerWidth < 1024 && this.pages.length > 0) {
+      const containerWidth = this.container.clientWidth - 20;
+      const pageWidth = this.pages[0].width;
+      if (pageWidth > 0 && containerWidth > 0) {
+        const fitZoom = containerWidth / pageWidth;
+        this.viewportManager.setZoom(Math.max(0.1, Math.min(fitZoom, 4.0)));
+      }
+    }
+
     this.recalcLayout();
 
     this.container.scrollTop = 0;
