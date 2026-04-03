@@ -310,7 +310,7 @@ impl WebCanvasRenderer {
                 self.open_shape_transform(&img.transform, &node.bbox);
                 if let Some(ref data) = img.data {
                     self.draw_image_with_fill_mode(
-                        data, &node.bbox, img.fill_mode, img.original_size,
+                        data, &node.bbox, img.fill_mode, img.original_size, img.crop,
                     );
                 }
             }
@@ -1567,6 +1567,31 @@ impl Renderer for WebCanvasRenderer {
 
 #[cfg(target_arch = "wasm32")]
 impl WebCanvasRenderer {
+    /// crop 영역만 표시하는 drawImage (9인자 버전)
+    fn draw_image_cropped(&mut self, data: &[u8],
+        sx: f64, sy: f64, sw: f64, sh: f64,
+        dx: f64, dy: f64, dw: f64, dh: f64,
+    ) {
+        let key = hash_bytes(data);
+
+        let cached = IMAGE_CACHE.with(|cache| {
+            let c = cache.borrow();
+            c.get(&key).cloned()
+        });
+
+        if let Some(img) = cached {
+            if img.complete() && img.natural_width() > 0 {
+                let _ = self.ctx.draw_image_with_html_image_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
+                    &img, sx, sy, sw, sh, dx, dy, dw, dh,
+                );
+                return;
+            }
+        }
+
+        // 캐시 미스: draw_image로 로드 시작 (다음 렌더에서 crop 적용)
+        self.draw_image(data, dx, dy, dw, dh);
+    }
+
     /// 텍스트 변형 효과 렌더링 (외곽선/그림자/양각/음각)
     fn draw_text_with_effects(
         &self,
@@ -1937,11 +1962,30 @@ impl WebCanvasRenderer {
         bbox: &super::render_tree::BoundingBox,
         fill_mode: Option<ImageFillMode>,
         original_size: Option<(f64, f64)>,
+        crop: Option<(i32, i32, i32, i32)>,
     ) {
         let mode = fill_mode.unwrap_or(ImageFillMode::FitToSize);
         match mode {
             ImageFillMode::FitToSize | ImageFillMode::None => {
-                // 크기에 맞추어: 현재 동작 유지
+                // crop이 있으면 source rect 기반 drawImage 사용
+                if let Some((cl, ct, cr, cb)) = crop {
+                    if let Some((img_w, img_h)) = parse_image_dimensions_canvas(data) {
+                        let img_w = img_w as f64;
+                        let img_h = img_h as f64;
+                        let scale_x = cr as f64 / img_w;
+                        let src_x = cl as f64 / scale_x;
+                        let src_y = ct as f64 / scale_x;
+                        let src_w = (cr - cl) as f64 / scale_x;
+                        let src_h = (cb - ct) as f64 / scale_x;
+                        let is_cropped = src_x > 0.5 || src_y > 0.5
+                            || (src_w - img_w).abs() > 1.0 || (src_h - img_h).abs() > 1.0;
+                        if is_cropped {
+                            self.draw_image_cropped(data, src_x, src_y, src_w, src_h,
+                                bbox.x, bbox.y, bbox.width, bbox.height);
+                            return;
+                        }
+                    }
+                }
                 self.draw_image(data, bbox.x, bbox.y, bbox.width, bbox.height);
             }
             _ => {

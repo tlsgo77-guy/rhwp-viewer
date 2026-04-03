@@ -634,6 +634,7 @@ impl LayoutEngine {
                                     fill_mode: None,
                                     original_size: None,
                                     transform: ShapeTransform::default(),
+                                    crop: None,
                                 }),
                                 BoundingBox::new(pic_x, pic_y, fit_w, fit_h),
                             );

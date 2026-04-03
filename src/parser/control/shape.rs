@@ -741,8 +741,14 @@ fn parse_picture(
     pic.border_color = r.read_color_ref().unwrap_or(0);
     pic.border_width = r.read_i32().unwrap_or(0);
 
-    // 테두리 속성 (attr u32)
-    let _border_attr = r.read_u32().unwrap_or(0);
+    // 테두리 속성 (attr u32, 표 87 참조)
+    let border_attr_raw = r.read_u32().unwrap_or(0);
+    pic.border_attr = ShapeBorderLine {
+        color: pic.border_color,
+        width: pic.border_width,
+        attr: border_attr_raw,
+        outline_style: 0,
+    };
 
     // 꼭짓점 좌표 (4개씩)
     for i in 0..4 {

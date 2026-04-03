@@ -47,22 +47,49 @@ impl LayoutEngine {
             pic_width *= scale;
         }
 
-        // 그림 위치: 컨테이너 내 정렬에 따라 배치
-        let pic_x = match alignment {
-            Alignment::Center | Alignment::Distribute => {
-                container.x + (container.width - pic_width).max(0.0) / 2.0
-            }
-            Alignment::Right => {
-                container.x + (container.width - pic_width).max(0.0)
-            }
-            _ => container.x, // Left, Justify 등
+        // 그림 위치: non-TAC 이미지는 common 속성의 offset 적용
+        // 머리말/꼬리말에서 vert=Paper는 상단여백(header area) 기준
+        let (pic_x, pic_y) = if !picture.common.treat_as_char {
+            let h_offset = hwpunit_to_px(picture.common.horizontal_offset as i32, self.dpi);
+            let v_offset = hwpunit_to_px(picture.common.vertical_offset as i32, self.dpi);
+            let x = match picture.common.horz_align {
+                HorzAlign::Left | HorzAlign::Inside => container.x + h_offset,
+                HorzAlign::Center => container.x + (container.width - pic_width) / 2.0 + h_offset,
+                HorzAlign::Right | HorzAlign::Outside => container.x + container.width - pic_width - h_offset,
+            };
+            let y = match picture.common.vert_align {
+                VertAlign::Top | VertAlign::Inside => container.y + v_offset,
+                VertAlign::Center => container.y + (container.height - pic_height) / 2.0 + v_offset,
+                VertAlign::Bottom | VertAlign::Outside => container.y + container.height - pic_height - v_offset,
+            };
+            (x, y)
+        } else {
+            let x = match alignment {
+                Alignment::Center | Alignment::Distribute => {
+                    container.x + (container.width - pic_width).max(0.0) / 2.0
+                }
+                Alignment::Right => {
+                    container.x + (container.width - pic_width).max(0.0)
+                }
+                _ => container.x,
+            };
+            (x, container.y)
         };
-        let pic_y = container.y;
 
         // BinData에서 이미지 데이터 찾기 (bin_data_id는 1-indexed 순번)
         let bin_data_id = picture.image_attr.bin_data_id;
         let image_data = find_bin_data(bin_data_content, bin_data_id)
             .map(|c| c.data.clone());
+
+        // 그림 자르기: crop 좌표를 그대로 저장 (렌더러에서 이미지 px 크기와 비교)
+        let crop = {
+            let c = &picture.crop;
+            if c.right > c.left && c.bottom > c.top && (c.left != 0 || c.top != 0 || c.right != 0 || c.bottom != 0) {
+                Some((c.left, c.top, c.right, c.bottom))
+            } else {
+                None
+            }
+        };
 
         // 이미지 노드 생성
         let img_id = tree.next_id();
@@ -72,12 +99,16 @@ impl LayoutEngine {
                 section_index,
                 para_index,
                 control_index,
+                crop,
                 ..ImageNode::new(bin_data_id, image_data)
             }),
             BoundingBox::new(pic_x, pic_y, pic_width, pic_height),
         );
 
         parent_node.children.push(img_node);
+
+        // 그림 테두리(선) 렌더링
+        self.render_picture_border(tree, parent_node, picture, pic_x, pic_y, pic_width, pic_height);
     }
 
     /// 개체(Picture/Shape)의 절대 좌표 (x, y)를 계산한다.
@@ -246,6 +277,16 @@ impl LayoutEngine {
         let image_data = find_bin_data(bin_data_content, bin_data_id)
             .map(|c| c.data.clone());
 
+        // 그림 자르기
+        let crop = {
+            let c = &picture.crop;
+            if c.right > c.left && c.bottom > c.top {
+                Some((c.left, c.top, c.right, c.bottom))
+            } else {
+                None
+            }
+        };
+
         // 이미지 노드 생성
         let img_id = tree.next_id();
         let img_node = RenderNode::new(
@@ -254,12 +295,16 @@ impl LayoutEngine {
                 section_index: Some(section_index),
                 para_index: Some(para_index),
                 control_index: Some(control_index),
+                crop,
                 ..ImageNode::new(bin_data_id, image_data)
             }),
             BoundingBox::new(adjusted_pic_x, pic_y, pic_width, pic_height),
         );
 
         parent_node.children.push(img_node);
+
+        // 그림 테두리(선) 렌더링
+        self.render_picture_border(tree, parent_node, picture, adjusted_pic_x, pic_y, pic_width, pic_height);
 
         // 캡션 렌더링
         if let Some(ref caption) = picture.caption {
@@ -889,4 +934,51 @@ fn format_footnote_number(number: u16, format: &NumberFormat, suffix: char) -> S
     };
 
     format!("{}{} ", num_str, suffix_str)
+}
+
+impl LayoutEngine {
+    /// 그림 테두리(선) 렌더링
+    /// border_attr의 bit 0~5가 선 종류, border_width가 두께 (0이면 기본 0.1mm)
+    pub(crate) fn render_picture_border(
+        &self,
+        tree: &mut PageRenderTree,
+        parent: &mut RenderNode,
+        picture: &crate::model::image::Picture,
+        x: f64, y: f64, w: f64, h: f64,
+    ) {
+        let line_type = picture.border_attr.attr & 0x3F;
+        // 선 종류 0 = 없음
+        if line_type == 0 {
+            return;
+        }
+        let border_w = if picture.border_width > 0 {
+            hwpunit_to_px(picture.border_width, self.dpi)
+        } else {
+            // 기본 선 두께 0.1mm
+            0.1 / 25.4 * self.dpi
+        };
+        let stroke_dash = match line_type {
+            2 => super::super::StrokeDash::Dot,      // 점선
+            3 => super::super::StrokeDash::Dash,      // 긴 점선 (파선)
+            4 => super::super::StrokeDash::DashDot,   // 일점쇄선
+            5 => super::super::StrokeDash::DashDotDot, // 이점쇄선
+            _ => super::super::StrokeDash::Solid,      // 1=실선, 기타
+        };
+        let style = super::super::ShapeStyle {
+            fill_color: None,
+            pattern: None,
+            stroke_color: Some(picture.border_color),
+            stroke_width: border_w,
+            stroke_dash,
+            opacity: 1.0,
+            shadow: None,
+        };
+        let border_id = tree.next_id();
+        let border_node = RenderNode::new(
+            border_id,
+            RenderNodeType::Rectangle(RectangleNode::new(0.0, style, None)),
+            BoundingBox::new(x, y, w, h),
+        );
+        parent.children.push(border_node);
+    }
 }

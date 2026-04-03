@@ -905,11 +905,58 @@ impl SvgRenderer {
 
         match fill_mode {
             ImageFillMode::FitToSize => {
-                // 크기에 맞추어: 도형 면에 맞게 늘리기
-                self.output.push_str(&format!(
-                    "<image x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" preserveAspectRatio=\"none\" href=\"{}\"/>\n",
-                    bbox.x, bbox.y, bbox.width, bbox.height, data_uri,
-                ));
+                // 그림 자르기: crop이 있으면 원본 이미지의 일부만 표시
+                if let Some((cl, ct, cr, cb)) = img.crop {
+                    if let Some((img_w, img_h)) = parse_image_dimensions(&render_data) {
+                        let img_w = img_w as f64;
+                        let img_h = img_h as f64;
+                        // crop 좌표 → 원본 이미지 비율 (crop 좌표 / 안 자른 전체 crop 크기)
+                        // 안 자른 전체 crop 크기 ≈ 원본 px × (crop.right / img_w)
+                        // 즉 scale = crop.right / img_w (이 값이 ~75)
+                        let scale_x = cr as f64 / img_w;
+                        let scale_y = if ct == 0 && cl == 0 {
+                            // 전체 이미지의 scale은 right/width로 추정
+                            scale_x
+                        } else {
+                            cb as f64 / img_h // fallback
+                        };
+                        // 원본 px 좌표로 변환
+                        let src_x = cl as f64 / scale_x;
+                        let src_y = ct as f64 / scale_x;
+                        let src_w = (cr - cl) as f64 / scale_x;
+                        let src_h = (cb - ct) as f64 / scale_x;
+                        // 전체 이미지 대비 잘림이 있는지 확인
+                        let is_cropped = src_x > 0.5 || src_y > 0.5
+                            || (src_w - img_w).abs() > 1.0 || (src_h - img_h).abs() > 1.0;
+                        if is_cropped {
+                            // SVG: 중첩 svg + viewBox로 crop 영역만 표시
+                            self.output.push_str(&format!(
+                                "<svg x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" viewBox=\"{} {} {} {}\" preserveAspectRatio=\"none\">\
+                                <image width=\"{}\" height=\"{}\" preserveAspectRatio=\"none\" href=\"{}\"/></svg>\n",
+                                bbox.x, bbox.y, bbox.width, bbox.height,
+                                src_x, src_y, src_w, src_h,
+                                img_w, img_h, data_uri,
+                            ));
+                        } else {
+                            self.output.push_str(&format!(
+                                "<image x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" preserveAspectRatio=\"none\" href=\"{}\"/>\n",
+                                bbox.x, bbox.y, bbox.width, bbox.height, data_uri,
+                            ));
+                        }
+                    } else {
+                        // 이미지 크기 파싱 실패 → crop 무시
+                        self.output.push_str(&format!(
+                            "<image x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" preserveAspectRatio=\"none\" href=\"{}\"/>\n",
+                            bbox.x, bbox.y, bbox.width, bbox.height, data_uri,
+                        ));
+                    }
+                } else {
+                    // crop 없음: 기존 동작
+                    self.output.push_str(&format!(
+                        "<image x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" preserveAspectRatio=\"none\" href=\"{}\"/>\n",
+                        bbox.x, bbox.y, bbox.width, bbox.height, data_uri,
+                    ));
+                }
             }
             ImageFillMode::TileAll => {
                 // 바둑판식으로-모두: 원래 크기로 전체 타일링

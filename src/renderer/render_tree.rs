@@ -592,6 +592,10 @@ pub struct ImageNode {
     pub original_size: Option<(f64, f64)>,
     /// 변환 (회전/대칭)
     pub transform: ShapeTransform,
+    /// 그림 자르기: "자르기 한 후 사각형" 원본 좌표 (left, top, right, bottom)
+    /// 렌더러에서 이미지 원본 px 크기와 비교하여 source rect 계산
+    /// None이면 전체 이미지 표시
+    pub crop: Option<(i32, i32, i32, i32)>,
 }
 
 impl ImageNode {
@@ -601,6 +605,7 @@ impl ImageNode {
             section_index: None, para_index: None, control_index: None,
             fill_mode: None, original_size: None,
             transform: ShapeTransform::default(),
+            crop: None,
         }
     }
 }
