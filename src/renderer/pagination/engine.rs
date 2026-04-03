@@ -153,8 +153,12 @@ impl Paginator {
                 let has_tac = para.controls.iter().any(|c|
                     matches!(c, Control::Table(t) if t.common.treat_as_char));
                 if has_tac {
-                    // 표 실측 높이 합산 (outer_top + line_spacing 포함, outer_bottom 제외)
+                    // 표 실측 높이 합산 (outer_top 포함, outer_bottom 제외)
                     // 캡션은 paginate_table_control에서 별도 처리하므로 여기서는 제외
+                    // 마지막 TAC의 trailing line_spacing 제외 (텍스트 trailing_ls와 동일 원칙)
+                    let tac_total_count = para.controls.iter()
+                        .filter(|c| matches!(c, Control::Table(t) if t.common.treat_as_char))
+                        .count();
                     let mut tac_ci = 0usize;
                     let tac_h: f64 = para.controls.iter().enumerate()
                         .filter_map(|(ci, c)| {
@@ -162,7 +166,6 @@ impl Paginator {
                                 if t.common.treat_as_char {
                                     let mt = measured.get_measured_table(para_idx, ci);
                                     let mt_h = mt.map(|m| {
-                                        // total_height에서 캡션 높이/간격 제외
                                         let cap_h = m.caption_height;
                                         let cap_s = if cap_h > 0.0 {
                                             t.caption.as_ref()
@@ -173,10 +176,15 @@ impl Paginator {
                                     }).unwrap_or(0.0);
                                     let outer_top = crate::renderer::hwpunit_to_px(
                                         t.outer_margin_top as i32, self.dpi);
-                                    let ls = para.line_segs.get(tac_ci)
-                                        .filter(|seg| seg.line_spacing > 0)
-                                        .map(|seg| crate::renderer::hwpunit_to_px(seg.line_spacing, self.dpi))
-                                        .unwrap_or(0.0);
+                                    let is_last = tac_ci + 1 == tac_total_count;
+                                    let ls = if !is_last {
+                                        para.line_segs.get(tac_ci)
+                                            .filter(|seg| seg.line_spacing > 0)
+                                            .map(|seg| crate::renderer::hwpunit_to_px(seg.line_spacing, self.dpi))
+                                            .unwrap_or(0.0)
+                                    } else {
+                                        0.0 // trailing line_spacing 제외
+                                    };
                                     tac_ci += 1;
                                     Some(mt_h + outer_top + ls)
                                 } else { None }
@@ -968,7 +976,7 @@ impl Paginator {
         // 호스트 문단 간격 계산
         let is_tac_table = table.common.treat_as_char;
         let table_text_wrap = table.common.text_wrap;
-        let host_spacing = {
+        let (host_spacing, host_line_spacing) = {
             let mp = measured.get_measured_paragraph(para_idx);
             let sb = mp.map(|m| m.spacing_before).unwrap_or(0.0);
             let sa = mp.map(|m| m.spacing_after).unwrap_or(0.0);
@@ -1007,7 +1015,7 @@ impl Paginator {
             } else {
                 (if !is_column_top { sb } else { 0.0 }) + outer_top
             };
-            before + sa + outer_bottom + host_line_spacing
+            (before + sa + outer_bottom + host_line_spacing, host_line_spacing)
         };
 
         // 문단 내 표 컨트롤 수: 여러 개이면 개별 표 높이 사용
@@ -1015,8 +1023,9 @@ impl Paginator {
             .filter(|c| matches!(c, Control::Table(t) if t.common.treat_as_char))
             .count();
         let table_total_height = if is_tac_table && para_height > 0.0 && tac_table_count <= 1 {
-            // TAC 표: 실측 높이(effective_height) + 호스트 간격 사용
-            effective_height + host_spacing
+            // TAC 표: 실측 높이 + 호스트 간격 (trailing line_spacing 제외)
+            // trailing ls는 다음 문단과의 간격이므로 fit 체크에서 제외
+            effective_height + host_spacing - host_line_spacing
         } else if is_tac_table && tac_table_count > 1 {
             // 다중 TAC 표: LINE_SEG 데이터로 개별 표 높이 계산
             // LINE_SEG[k] = k번째 TAC 표의 줄 높이(표 높이 포함) + 줄간격
