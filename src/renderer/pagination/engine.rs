@@ -427,11 +427,17 @@ impl Paginator {
                 }
 
                 // 표 감지: 시각적 높이 저장 + Fixed 누적 시작 (Task #9)
+                // TAC 표의 높이는 이미 paginate_table_control에서 current_height에 반영됨
+                // fix_overlay는 고정값→글자에따라 전환이 있는 경우에만 유효
                 if let Some(seg) = para.line_segs.first() {
                     if seg.line_spacing < 0 {
                         fix_table_visual_h = crate::renderer::hwpunit_to_px(seg.line_height, self.dpi);
                         fix_vpos_tmp = 0.0;
                         fix_overlay_active = true;
+                    } else if has_tac_block_table {
+                        // 양수 ls의 TAC 표: fix_overlay 리셋
+                        // 이전 표의 fix_table_visual_h를 후속 비-표 문단에 이중 적용 방지
+                        fix_overlay_active = false;
                     }
                 }
             }

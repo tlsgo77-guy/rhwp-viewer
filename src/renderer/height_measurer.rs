@@ -243,12 +243,36 @@ impl HeightMeasurer {
                 })
                 .unzip()
         } else if !para.line_segs.is_empty() {
-            para.line_segs.iter()
-                .map(|seg| (
-                    hwpunit_to_px(seg.line_height, self.dpi),
-                    hwpunit_to_px(seg.line_spacing, self.dpi),
-                ))
-                .unzip()
+            // 누름틀(ClickHere) 안내문이 LINE_SEG에 포함되면 줄 수가 실제보다 많음
+            // 안내문 텍스트가 차지하는 줄을 제외하여 실제 렌더링 높이를 계산
+            let guide_char_count: usize = para.controls.iter()
+                .filter_map(|c| {
+                    if let Control::Field(f) = c {
+                        f.guide_text().map(|t| t.encode_utf16().count())
+                    } else { None }
+                })
+                .sum();
+            if guide_char_count > 0 && para.line_segs.len() >= 2 {
+                // 안내문이 차지하는 LINE_SEG 수:
+                // 제어문자(필드 시작/끝 약 8 code units) + 안내문 길이까지의 text_start
+                let guide_end = guide_char_count + 10; // 제어문자 + 안내문 + 여유
+                let skip = para.line_segs.iter()
+                    .position(|seg| (seg.text_start as usize) >= guide_end)
+                    .unwrap_or(0);
+                para.line_segs.iter().skip(skip)
+                    .map(|seg| (
+                        hwpunit_to_px(seg.line_height, self.dpi),
+                        hwpunit_to_px(seg.line_spacing, self.dpi),
+                    ))
+                    .unzip()
+            } else {
+                para.line_segs.iter()
+                    .map(|seg| (
+                        hwpunit_to_px(seg.line_height, self.dpi),
+                        hwpunit_to_px(seg.line_spacing, self.dpi),
+                    ))
+                    .unzip()
+            }
         } else {
             // 빈 문단: 기본 높이
             (vec![hwpunit_to_px(400, self.dpi)], vec![0.0])
@@ -280,8 +304,34 @@ impl HeightMeasurer {
             }
         };
 
+        // 누름틀(ClickHere) 안내문 높이 제외
+        // 안내문은 렌더링되지 않으므로 페이지네이션에서 높이를 차지하면 안 됨
+        let clickhere_adjustment: f64 = para.controls.iter()
+            .filter_map(|c| {
+                if let Control::Field(f) = c {
+                    if let Some(guide) = f.guide_text() {
+                        let guide_u16_len = guide.encode_utf16().count();
+                        if guide_u16_len > 0 && para.line_segs.len() >= 2 {
+                            // 안내문이 차지하는 LINE_SEG 수 계산
+                            let guide_end = guide_u16_len + 10; // 제어문자 여유
+                            let guide_segs = para.line_segs.iter()
+                                .position(|seg| (seg.text_start as usize) >= guide_end)
+                                .unwrap_or(0);
+                            if guide_segs > 0 {
+                                let adj: f64 = para.line_segs[..guide_segs].iter()
+                                    .map(|seg| hwpunit_to_px(seg.line_height + seg.line_spacing, self.dpi))
+                                    .sum();
+                                return Some(adj);
+                            }
+                        }
+                    }
+                }
+                None
+            })
+            .sum();
+
         // 그림 높이는 문단 높이에 포함하지 않음 (별도 PageItem::Shape로 처리)
-        let total_height = spacing_before + lines_total + spacing_after;
+        let total_height = (spacing_before + lines_total + spacing_after - clickhere_adjustment).max(0.0);
 
         MeasuredParagraph {
             para_index,
